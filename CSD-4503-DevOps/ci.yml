@@ -1,0 +1,67 @@
+# Trigger of the pipeline
+on:
+  # Initiate the pipeline when there is a push event in the main branch
+  push:
+    branches:
+      - main
+
+jobs:
+  # Stage 1: Building the Docker image
+  build-docker-image:
+    name: Build the application Docker image
+    runs-on: aws-debian-runner-1  # Using the self-hosted runner
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2  # Clones the project into the working directory
+
+      - name: Build Docker Image
+        run: |
+          docker build -t flask-app-1:v1.0.0 -f Dockerfile .
+
+  # Stage 2: Unit testing the application
+  test:
+    name: Unit testing of the application
+    needs: [build-docker-image]
+    runs-on: aws-debian-runner-1
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python and install dependencies
+        shell: bash
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install flask pytest pymongo
+
+      - name: Run unit tests
+        run: |
+          source venv/bin/activate
+          pytest tests/
+
+  # Stage 3: Deploy the Docker image
+  deploy-docker-image:
+    name: Deploy the Flask image
+    needs: [build-docker-image, test]
+    runs-on: aws-debian-runner-1  # Using the self-hosted runner
+    environment: development
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Deploy the Docker image
+        env:
+          MONGODB_USERNAME: ${{ secrets.MONGODB_USERNAME }}
+          MONGODB_PASSWORD: ${{ secrets.MONGODB_PASSWORD }}
+        run: |
+          docker rm -f flask-app-1 || true
+          docker run -d -p 5000:5000 \
+            -e MONGODB_USERNAME=${{ secrets.MONGODB_USERNAME }} \
+            -e MONGODB_PASSWORD=${{ secrets.MONGODB_PASSWORD }} \
+            --name flask-app-1 flask-app-1:v1.0.0
